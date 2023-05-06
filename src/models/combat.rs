@@ -73,6 +73,7 @@ impl Unit {
                 "Target is {} inches away, which is within range of {}. Shooting now!",
                 distance, weapon.weapon_range
             );
+            debug!("Successful Hit Threshold is {}", weapon.hit);
             let hits = Self::hit(&weapon);
             let wounds = Self::wound(&weapon, &defender, hits);
             let saves = Self::save(&weapon, &defender, wounds);
@@ -265,6 +266,17 @@ impl Unit {
         debug!("Starting {} inches to enemy", distance);
         // start attacker combat loop
 
+        println!(
+            "Round {}! \n{} has {} models and {} wounds.\n{} has {} models and {} wounds.",
+            round,
+            attacker.name,
+            attacker_models,
+            attacker_wounds,
+            defender.name,
+            defender_models,
+            defender_wounds
+        );
+
         // if attacker not in engagement range then move directly towards enemy unit at maximum speed.
         let distance = attacker.movement(distance);
         debug!("{} inches to enemy", distance);
@@ -275,7 +287,7 @@ impl Unit {
             for x in 0..ranged_weapon.len() {
                 (hits, damage) = Unit::shoot(&ranged_weapon[x], &defender, distance);
                 debug!(
-                    "Made {} successfull shots at the enemy, each one dealing {} damage",
+                    "Made {} successfull shots at the enemy, each dealing {} damage",
                     hits, damage
                 );
                 (defender_models, defender_wounds) =
@@ -289,6 +301,11 @@ impl Unit {
                 defender.name, round, attacker.name, attacker_models, attacker_wounds
             );
             return;
+        } else {
+            println!(
+                "After shooting {} {} remain for the defender, with {} wounds on the weakest one.",
+                defender_models, defender.name, defender_wounds
+            )
         }
 
         // if all enemies dead then end combat with victory and return the number of models and how many wounds left over.
