@@ -66,23 +66,73 @@ impl Unit {
         }
     }
 
-    pub fn shoot(weapon: &Weapons, defender: &Unit, distance: i8) -> (i8, i8) {
-        let mut success = 0;
-        if distance <= weapon.weapon_range {
-            debug!(
-                "Target is {} inches away, which is within range of {}. Shooting now!",
-                distance, weapon.weapon_range
-            );
-            debug!("Successful Hit Threshold is {}", weapon.hit);
-            let hits = Self::hit(&weapon);
-            let wounds = Self::wound(&weapon, &defender, hits);
-            let saves = Self::save(&weapon, &defender, wounds);
-            success += saves
-        } else {
-            debug!("Target is {} inches away, which is out of range of weapon {} which has a range of {}", distance, weapon.name, weapon.weapon_range);
-            return (0, 0);
+    pub fn shooting(
+        attacker: &Unit,
+        defender: &Unit,
+        target_models: i8,
+        target_wounds: i8,
+        distance: i8,
+    ) -> (i8, i8) {
+        let mut defender_models = target_models;
+        let mut defender_wounds = target_wounds;
+        if let Some(ranged_weapons) = &attacker.ranged_weapons {
+            for weapon in ranged_weapons {
+                if distance <= weapon.weapon_range {
+                    debug!(
+                        "Target is {} inches away, which is within range of {}. Shooting now!",
+                        distance, weapon.weapon_range
+                    );
+                    debug!("Successful Hit Threshold is {}", weapon.hit);
+                    let hits = Self::hit(&weapon);
+                    let wounds = Self::wound(&weapon, &defender, hits);
+                    let saves = Self::save(&weapon, &defender, wounds);
+                    let (models, wounds) = Self::damage(
+                        &defender,
+                        defender_models,
+                        defender_wounds,
+                        saves,
+                        weapon.damage,
+                    );
+                    defender_models = models;
+                    defender_wounds = wounds;
+                    debug!(
+                        "Made {} successful shots at the enemy, each dealing {} damage",
+                        saves, weapon.damage
+                    );
+                } else {
+                    debug!("Target is {} inches away, which is out of range of weapon {} which has a range of {}", distance, weapon.name, weapon.weapon_range);
+                }
+            }
         }
-        return (success, weapon.damage);
+        (defender_models, defender_wounds)
+    }
+
+    pub fn melee(source: &Unit, target: &Unit, target_models: i8, target_wounds: i8) -> (i8, i8) {
+        let mut defender_models = target_models;
+        let mut defender_wounds = target_wounds;
+        if let Some(melee_weapons) = &source.melee_weapons {
+            for weapon in melee_weapons {
+                debug!("Target is engaged in melee!");
+                debug!("Successful Hit Threshold is {}", weapon.hit);
+                let hits = Self::hit(&weapon);
+                let wounds = Self::wound(&weapon, &target, hits);
+                let saves = Self::save(&weapon, &target, wounds);
+                let (models, wounds) = Self::damage(
+                    &target,
+                    defender_models,
+                    defender_wounds,
+                    saves,
+                    weapon.damage,
+                );
+                defender_models = models;
+                defender_wounds = wounds;
+                debug!(
+                    "Made {} successful attacks at the enemy, each dealing {} damage",
+                    saves, weapon.damage
+                );
+            }
+        }
+        (defender_models, defender_wounds)
     }
 
     pub fn hit(weapon: &Weapons) -> i8 {
@@ -198,6 +248,63 @@ impl Unit {
         return (models, wounds);
     }
 
+    pub fn charge(self, distance: i8) -> (bool, bool) {
+        let mut engaged = false;
+        let mut charged = false;
+        match distance {
+            d if distance <= 0 => {
+                engaged = true;
+                charged = false;
+                debug!("{} is in melee, didn't charge this turn", self.name)
+            }
+            d if distance <= 12 => {
+                let charge_roll = (d6(), d6());
+                let charge = charge_roll.0 + charge_roll.1;
+                debug!("Attempting to charge, target is {} inches away", distance);
+                if charge >= distance {
+                    debug!("Charge Successful! with a roll of {}", charge);
+                    charged = true;
+                    engaged = true;
+                } else {
+                    debug!("Charge Failed with a roll of {}", charge)
+                }
+            }
+            _ => (),
+        }
+        return (engaged, charged);
+    }
+
+    pub fn check_victory(
+        target_models: i8,
+        target_wounds: i8,
+        target: &Unit,
+        source: &Unit,
+        source_models: i8,
+        source_wounds: i8,
+        round: i8,
+        ranged: bool,
+    ) -> bool {
+        let mut combat: String;
+        if ranged == true {
+            combat = "shooting".to_string()
+        } else {
+            combat = "melee".to_string()
+        }
+        if target_models <= 0 {
+            println!(
+                "{} killed after {} rounds, {} still has {} models and {} wounds",
+                target.name, round, source.name, source_models, source_wounds
+            );
+            true
+        } else {
+            println!(
+                "After {} {} {} remain for the target, with {} wounds on the weakest one.",
+                combat, target_models, target.name, target_wounds
+            );
+            false
+        }
+    }
+
     // pub fn damage(&self, defender: &mut Unit, wounds: i8) -> i8 {
     //     let mut remaining_wounds: i8 = defender.stats.w;
     //     let mut losses: i8 = 0;
@@ -253,93 +360,97 @@ impl Unit {
     //     );
     // }
 
-    pub fn simulate_combat(attacker: Unit, defender: Unit, starting_distance: i8) {
-        let distance = starting_distance;
-        let mut hits = 0;
-        let mut damage = 0;
+    pub fn simulate_combat(attacker: Unit, defender: Unit, starting_distance: i8) -> bool {
+        let mut distance = starting_distance;
         let mut attacker_models = attacker.quantity;
         let mut attacker_wounds = attacker.stats.wounds;
         let mut defender_models = defender.quantity;
         let mut defender_wounds = defender.stats.wounds;
         let mut round: i8 = 1;
+        let mut engaged = false;
+        let mut charged = false;
+        let mut result = None;
 
         debug!("Starting {} inches to enemy", distance);
-        // start attacker combat loop
 
-        println!(
-            "Round {}! \n{} has {} models and {} wounds.\n{} has {} models and {} wounds.",
-            round,
-            attacker.name,
-            attacker_models,
-            attacker_wounds,
-            defender.name,
-            defender_models,
-            defender_wounds
-        );
-
-        // if attacker not in engagement range then move directly towards enemy unit at maximum speed.
-        let distance = attacker.movement(distance);
-        debug!("{} inches to enemy", distance);
-
-        // shoot ranged weapons if any available and not prevented from shooting in combat.
-        if attacker.ranged_weapons != None {
-            let ranged_weapon = attacker.ranged_weapons.unwrap();
-            for x in 0..ranged_weapon.len() {
-                (hits, damage) = Unit::shoot(&ranged_weapon[x], &defender, distance);
-                debug!(
-                    "Made {} successfull shots at the enemy, each dealing {} damage",
-                    hits, damage
-                );
-                (defender_models, defender_wounds) =
-                    Self::damage(&defender, defender_models, defender_wounds, hits, damage)
-            }
-        }
-
-        if defender_models <= 0 {
+        while result == None {
             println!(
-                "{} killed after {} rounds, {} still has {} models and {} wounds",
-                defender.name, round, attacker.name, attacker_models, attacker_wounds
+                "Round {}! \n{} has {} models and {} wounds.\n{} has {} models and {} wounds.",
+                round,
+                attacker.name,
+                attacker_models,
+                attacker_wounds,
+                defender.name,
+                defender_models,
+                defender_wounds
             );
-            return;
-        } else {
-            println!(
-                "After shooting {} {} remain for the defender, with {} wounds on the weakest one.",
-                defender_models, defender.name, defender_wounds
-            )
+
+            distance = attacker.movement(distance);
+            debug!("After moving, {} inches to enemy", distance);
+
+            (defender_models, defender_wounds) = Self::shooting(
+                &attacker,
+                &defender,
+                defender_models,
+                defender_wounds,
+                distance,
+            );
+
+            if Self::check_victory(
+                defender_models,
+                defender_wounds,
+                &defender,
+                &attacker,
+                attacker_models,
+                attacker_wounds,
+                round,
+                true,
+            ) {
+                result = Some(true);
+                break;
+            }
+
+            (engaged, charged) = Self::charge(attacker.clone(), distance);
+
+            if engaged && !charged {
+                Self::melee(&attacker, &defender, defender_models, defender_wounds);
+            }
+
+            if Self::check_victory(
+                defender_models,
+                defender_wounds,
+                &defender,
+                &attacker,
+                attacker_models,
+                attacker_wounds,
+                round,
+                false,
+            ) {
+                result = Some(true);
+                break;
+            }
+
+            if engaged {
+                Self::melee(&defender, &attacker, attacker_models, attacker_wounds);
+            }
+
+            if Self::check_victory(
+                attacker_models,
+                attacker_wounds,
+                &attacker,
+                &defender,
+                defender_models,
+                defender_wounds,
+                round,
+                false,
+            ) {
+                result = Some(false);
+                break;
+            }
+
+            round += 1;
         }
 
-        // if all enemies dead then end combat with victory and return the number of models and how many wounds left over.
-
-        // if already in combat then skip, otherwise try to charge if within 12 inches.
-
-        // if charge successful then enter combat with charge=true.
-
-        // if in engagement range then run melee else skip.
-
-        // if all enemies dead then end combat with victory and return the number of models and how many wounds left over.
-
-        // test for combat shock on any units that lost models.
-
-        //start defender turn
-
-        // if defender not in engagement range then move directly towards enemy unit at maximum speed.
-
-        // shoot ranged weapons if any available and not prevented from shooting in combat.
-
-        // if all enemies dead then end combat with defeat and return the number of models and how many wounds left over.
-
-        // if already in combat then skip, otherwise try to charge if within 12 inches.
-
-        // if charge successful then enter combat with charge=true.
-
-        // if in engagement range then run melee else skip.
-
-        // if all enemies dead then end combat with defeat and return the number of models and how many wounds left over.
-
-        // test for combat shock on any units that lost models.
-
-        // restart loop carrying over the number of models and wounds.
-
-        // attacker.attack(&mut defender);
+        result.unwrap()
     }
 }

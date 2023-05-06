@@ -15,6 +15,6 @@ fn main() {
         genestealers().quantity,
         genestealers().name
     );
-    let distance = 26;
-    Unit::simulate_combat(swarmlord().clone(), genestealers().clone(), distance);
+    let distance = 15;
+    let combat = Unit::simulate_combat(swarmlord().clone(), genestealers().clone(), distance);
 }
